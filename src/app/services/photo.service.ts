@@ -1,150 +1,85 @@
 import { Injectable } from '@angular/core';
-import { Plugins, CameraResultType, Capacitor, FilesystemDirectory, CameraPhoto, CameraSource } from '@capacitor/core';
+
+import { Plugins, CameraResultType, Capacitor, FilesystemDirectory, 
+  CameraPhoto, CameraSource } from '@capacitor/core';
+
 import { Platform } from '@ionic/angular';
+import { Console } from 'console';
+import { resolve } from 'path';
 
 const { Camera, Filesystem, Storage } = Plugins;
+
 
 @Injectable({
   providedIn: 'root'
 })
+
 export class PhotoService {
-  public photos: Photo[] = [];
-  private PHOTO_STORAGE: string = "photos";
-  private platform: Platform;
+  constructor(){};
 
-  constructor(platform: Platform) {
-    this.platform = platform;
-   }
+  public photos: Photo [] = [];
 
-  public async loadSaved() {
-    // Retrieve cached photo array data
-    const photos = await Storage.get({ key: this.PHOTO_STORAGE });
-    this.photos = JSON.parse(photos.value) || [];
+  public format: string
 
-    // If running on the web...
-    if (!this.platform.is('hybrid')) {
-      // Display the photo by reading into base64 format
-      for (let photo of this.photos) {
-        // Read each saved photo's data from the Filesystem
-        const readFile = await Filesystem.readFile({
-            path: photo.filepath,
-            directory: FilesystemDirectory.Data
-        });
-      
-        // Web platform only: Save the photo into the base64 field
-        photo.base64 = `data:image/jpeg;base64,${readFile.data}`;
-      }
-    }
+  async TakePhoto () {
+    this.OpenCameraAndTakePhoto()
+    .then(this.FetchPhoto)
+    .then(this.ConvertPhotoToBase64)
+    .then(this.WritePhotoToLocalStorage)
+    .catch(this.LogError)
   }
 
-  /* Use the device camera to take a photo:
-  // https://capacitor.ionicframework.com/docs/apis/camera
-  
-  // Store the photo data into permanent file storage:
-  // https://capacitor.ionicframework.com/docs/apis/filesystem
-  
-  // Store a reference to all photo filepaths using Storage API:
-  // https://capacitor.ionicframework.com/docs/apis/storage
-  */
-  public async addNewToGallery() {
-    // Take a photo
-    const capturedPhoto = await Camera.getPhoto({
-      resultType: CameraResultType.Uri, // file-based data; provides best performance
-      source: CameraSource.Camera, // automatically take a new photo with the camera
-      quality: 100 // highest quality (0 to 100)
-    });
+  async OpenCameraAndTakePhoto(){
+    // Opens Camera; only returns once user takes and selects photo
+    const photoMetadata = await Camera.getPhoto({
+      quality: 100,
+      resultType: CameraResultType.Uri,
+      source: CameraSource.Camera
+    })
+    this.format = photoMetadata.format;
+    console.log('photoMetadata:' + JSON.stringify(photoMetadata))
+    return photoMetadata.webPath;
+  }
+
+  async FetchPhoto(webPath: string){
+    const responseObj = await fetch(webPath);
     
-    const savedImageFile = await this.savePicture(capturedPhoto);
-
-    // Add new photo to Photos array
-    this.photos.unshift(savedImageFile);
-
-    // Cache all photo data for future retrieval
-    Storage.set({
-      key: this.PHOTO_STORAGE,
-      value: this.platform.is('hybrid')
-              ? JSON.stringify(this.photos)  
-              : JSON.stringify(this.photos.map(p => {
-                // Don't save the base64 representation of the photo data, 
-                // since it's already saved on the Filesystem
-                const photoCopy = { ...p };
-                delete photoCopy.base64;
-
-                return photoCopy;
-                }))
-    });
+    // Print out  fetch results. To do so, we need to re-fetch so we don't lock the body stream (?)
+    await fetch(webPath).then(response => {
+      response.text()
+        .then(text=> {
+          console.log("fetched response: " + text)
+        })
+    })
+    return responseObj;
   }
 
-  // Save picture to file on device
-  private async savePicture(cameraPhoto: CameraPhoto) {
-    // Convert photo to base64 format, required by Filesystem API to save
-    const base64Data = await this.readAsBase64(cameraPhoto);
+  async ConvertPhotoToBase64(responseObj: Response){
+    //convert to blob (binary large object)
+    const photoBlob = await responseObj.blob();
+    console.log('photoBlob:' + JSON.stringify(photoBlob))
+    const base64Photo = await this.convertBlobToBase64(photoBlob) as string;
 
-    // Write the file to the data directory
-    const fileName = new Date().getTime() + '.jpeg';
-    const savedFile = await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: FilesystemDirectory.Data
-    });
-
-    if (this.platform.is('hybrid')) {
-      // Display the new image by rewriting the 'file://' path to HTTP
-      // Details: https://ionicframework.com/docs/building/webview#file-protocol
-      return {
-        filepath: savedFile.uri,
-        webviewPath: Capacitor.convertFileSrc(savedFile.uri),
-      };
-    }
-    else {
-      // Use webPath to display the new image instead of base64 since it's 
-      // already loaded into memory
-      return {
-        filepath: fileName,
-        webviewPath: cameraPhoto.webPath
-      };
-    }
+    return base64Photo;
   }
 
-  // Read camera photo into base64 format based on the platform the app is running on
-  private async readAsBase64(cameraPhoto: CameraPhoto) {
-    // "hybrid" will detect Cordova or Capacitor
-    if (this.platform.is('hybrid')) {
-      // Read the file into base64 format
-      const file = await Filesystem.readFile({
-        path: cameraPhoto.path
-      });
+  async WritePhotoToLocalStorage(base64Photo){
+    // Write photo to browser local storage
+    const date = new Date();
+    const time = date.getTime();
+    const path = time + this.format;
 
-      return file.data;
-    }
-    else {
-      // Fetch the photo, read as a blob, then convert to base64 format
-      const response = await fetch(cameraPhoto.webPath!);
-      const blob = await response.blob();
+    Filesystem.writeFile({
+      path: path,
+      data: base64Photo
+    })
 
-      return await this.convertBlobToBase64(blob) as string;  
-    }
+    console.log("File Written: " + JSON.stringify(path),
+      JSON.stringify(base64Photo)
+    )
+    // if hybrid, readFile instead of fetch DataURL(?)
   }
-
-  // Delete picture by removing it from reference data and the filesystem
-  public async deletePicture(photo: Photo, position: number) {
-    // Remove this photo from the Photos reference data array
-    this.photos.splice(position, 1);
-
-    // Update photos array cache by overwriting the existing photo array
-    Storage.set({
-      key: this.PHOTO_STORAGE,
-      value: JSON.stringify(this.photos)
-    });
-
-    // delete photo file from filesystem
-    const filename = photo.filepath.substr(photo.filepath.lastIndexOf('/') + 1);
-    await Filesystem.deleteFile({
-      path: filename,
-      directory: FilesystemDirectory.Data
-    });
-  }
-
+  
   convertBlobToBase64 = (blob: Blob) => new Promise((resolve, reject) => {
     const reader = new FileReader;
     reader.onerror = reject;
@@ -152,11 +87,70 @@ export class PhotoService {
         resolve(reader.result);
     };
     reader.readAsDataURL(blob);
+
   });
+
+  LogError(error){
+    console.log('Error Occurred: ' + error);
+  }
+
+
+
+    // someVar.finally((success) => {
+    //   console.log("success: " + success)
+    // })
+   // error => console.log ("error: " + error)
+    
+
+    //console.log('1');
+    
+    //   .then(result => {
+    //     console.log("result: " + JSON.stringify(result));
+    //     let date = new Date();
+    //     Filesystem.writeFile({
+    //       path: date.getTime() + ".jpeg",
+    //       data: "ldkjfld" //result.path
+    //     });
+    // })
+    // .then(photo => {
+    //     console.log("photo: " + JSON.stringify(photo));
+    //   },(error) => {
+    //     console.log(error);
+    //   })
+      
+      
+      // Fetch the photo, read as a blob, then convert to base64 format
+   // console.log("starting fetched response")
+    // const response = await fetch(somePath);
+    // console.log("received fetched response")
+    // // read fetch response
+    // response.text().then(function (text){
+    //   console.log ("fetched photo's webPath: "+ text);
+    // })
+    
+    
+    //this.photos.unshift(photo);
+
+  
+
+    saveToFileSystem(){
+
+    }
+
+    StorePhoto() {
+
+    }
+
+  }
+
+class Photo {
+  path: String  //hybrid only?
+  webPath: String
+  base64: String
 }
 
-interface Photo {
-  filepath: string;
-  webviewPath: string;
-  base64?: string;
-}
+
+
+
+
+
