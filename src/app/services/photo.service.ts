@@ -4,8 +4,7 @@ import { Plugins, CameraResultType, Capacitor, FilesystemDirectory,
   CameraPhoto, CameraSource } from '@capacitor/core';
 
 import { Platform } from '@ionic/angular';
-import { Console } from 'console';
-import { resolve } from 'path';
+
 
 const { Camera, Filesystem, Storage } = Plugins;
 
@@ -21,12 +20,20 @@ export class PhotoService {
 
   public format: string
 
-  async TakePhoto () {
-    this.OpenCameraAndTakePhoto()
-    .then(this.FetchPhoto)
-    .then(this.ConvertPhotoToBase64)
-    .then(this.WritePhotoToLocalStorage)
-    .catch(this.LogError)
+  async TakePhoto () { 
+    try{
+      const metadata = await this.OpenCameraAndTakePhoto();    
+      const base64Photo = await this.FetchPhoto(metadata);
+      this.WritePhotoToLocalStorage(base64Photo);
+    }
+    catch(error){
+      this.LogError(error)
+    }
+    // Promise Chaining - I can't figure out how to get this work - it doesn't seem to be passing the values to each upcoming function
+    // this.OpenCameraAndTakePhoto()
+    // .then(this.FetchPhoto)
+    // .then(this.WritePhotoToLocalStorage)
+    // .catch(this.LogError)
   }
 
   async OpenCameraAndTakePhoto(){
@@ -38,30 +45,34 @@ export class PhotoService {
     })
     this.format = photoMetadata.format;
     console.log('photoMetadata:' + JSON.stringify(photoMetadata))
-    return photoMetadata.webPath;
-  }
+    console.log('photoMetadata.webPath:' + JSON.stringify(photoMetadata.webPath))
+    return photoMetadata;
+  } 
 
-  async FetchPhoto(webPath: string){
-    const responseObj = await fetch(webPath);
+  async FetchPhoto(photoMetadata){
+    const responseObj = await fetch(photoMetadata.webPath);
     
-    // Print out  fetch results. To do so, we need to re-fetch so we don't lock the body stream (?)
-    await fetch(webPath).then(response => {
+    // Print out fetch results. To do so, we need to re-fetch so we don't lock the body stream (?)
+    await fetch(photoMetadata.webPath).then(response => {
       response.text()
         .then(text=> {
           console.log("fetched response: " + text)
         })
     })
-    return responseObj;
+    
+    const blob = await responseObj.blob();
+    console.log('photoBlob:' + JSON.stringify(blob));
+    return await this.convertBlobToBase64(blob) as string;
+
+    //const base64Photo = await this.convertBlobToBase64(blobImage) as string;
+    //return base64Photo;
   }
 
-  async ConvertPhotoToBase64(responseObj: Response){
-    //convert to blob (binary large object)
-    const photoBlob = await responseObj.blob();
-    console.log('photoBlob:' + JSON.stringify(photoBlob))
-    const base64Photo = await this.convertBlobToBase64(photoBlob) as string;
-
-    return base64Photo;
-  }
+  // async ConvertPhotoToBase64(blob){
+  //   //convert to blob (binary large object)
+    
+    
+  // }
 
   async WritePhotoToLocalStorage(base64Photo){
     // Write photo to browser local storage
@@ -91,57 +102,11 @@ export class PhotoService {
   });
 
   LogError(error){
-    console.log('Error Occurred: ' + error);
+    console.log('%c Error Occurred: ', 'background: #FF0000; color: #00000' + error);
   }
-
-
-
-    // someVar.finally((success) => {
-    //   console.log("success: " + success)
-    // })
-   // error => console.log ("error: " + error)
-    
-
-    //console.log('1');
-    
-    //   .then(result => {
-    //     console.log("result: " + JSON.stringify(result));
-    //     let date = new Date();
-    //     Filesystem.writeFile({
-    //       path: date.getTime() + ".jpeg",
-    //       data: "ldkjfld" //result.path
-    //     });
-    // })
-    // .then(photo => {
-    //     console.log("photo: " + JSON.stringify(photo));
-    //   },(error) => {
-    //     console.log(error);
-    //   })
-      
-      
-      // Fetch the photo, read as a blob, then convert to base64 format
-   // console.log("starting fetched response")
-    // const response = await fetch(somePath);
-    // console.log("received fetched response")
-    // // read fetch response
-    // response.text().then(function (text){
-    //   console.log ("fetched photo's webPath: "+ text);
-    // })
-    
-    
-    //this.photos.unshift(photo);
-
   
 
-    saveToFileSystem(){
-
-    }
-
-    StorePhoto() {
-
-    }
-
-  }
+}
 
 class Photo {
   path: String  //hybrid only?
