@@ -5,7 +5,6 @@ import { Plugins, CameraResultType, Capacitor, FilesystemDirectory,
 
 import { Platform } from '@ionic/angular';
 
-
 const { Camera, Filesystem, Storage } = Plugins;
 
 
@@ -14,43 +13,42 @@ const { Camera, Filesystem, Storage } = Plugins;
 })
 
 export class PhotoService {
-  constructor(){};
+
 
   public photos: Photo [] = [];
-
   public format: string;
   public webPath: string;
   private PHOTO_STORAGE_KEY: string = "photo";
+  private platform: Platform
 
-  JSONobj = {
-    name: "mike",
-    weight: 150
-  }
-  imageArray: object [] = [];
-
-
-  Console(obj: string){
-    console.log("Printing WebPath: " + obj);
-  }
+  constructor(platform: Platform){
+    this.platform = platform;
+  };
 
   async TakePhoto () { 
       const metadata = await this.OpenCameraAndTakePhoto();    
       const base64Photo = await this.FetchPhoto(metadata);
-      const imageObj = await this.WritePhotoToLocalStorage(base64Photo);
+      const imageObj = await this.WritePhotoToFileServer(base64Photo);
       this.photos.unshift(imageObj);
+      await this.AddImageToStorage();
+  }
 
-      console.log("photos Array after I take picture: " +  JSON.stringify(this.photos))
-      
-      Storage.set({
-        key: this.PHOTO_STORAGE_KEY,
-        value: JSON.stringify(this.photos)
-      })
+  async AddImageToStorage(){
+    // Image gets saved to each device's [Key, Value] DB for application defaults. 
+    // Web: Local Storage DB 
+    // iOS: User Default DB
+    // Android: Shared Prefences DB
+
+    console.log("photos Array (after user-taken photo is added): " +  JSON.stringify(this.photos))
+    
+    // Update storage with entire photos array; ToDo: Determine if updating entire array is necessary-- could optimize by only updating only new photo
+    Storage.set({
+      key: this.PHOTO_STORAGE_KEY,
+      value: JSON.stringify(this.photos)
+    })
   }
 
   async loadPhotosFromStorage(){
-    console.log("JSONobj: " + this.JSONobj)
-    console.log("stringify(JSONobj): " + JSON.stringify(this.JSONobj))
-    
     const photos = await Storage.get({
       key: this.PHOTO_STORAGE_KEY
     });
@@ -68,64 +66,64 @@ export class PhotoService {
     })
     this.format = photoMetadata.format;
     this.webPath = photoMetadata.webPath;
+    console.log ('Filesystem Directory.Data: ' + FilesystemDirectory.Data)
     console.log('photoMetadata:' + JSON.stringify(photoMetadata))
     console.log('photoMetadata.webPath:' + JSON.stringify(photoMetadata.webPath))
     return photoMetadata;
   } 
 
+
   async FetchPhoto(photoMetadata){
-    const responseObj = await fetch(photoMetadata.webPath);
-    //debugger;
+  //Grab the image from cache
 
-    // if web, fetch DataURL(?)
+    // if mobile
+    if (this.platform.is("hybrid")){
+      let file = await Filesystem.readFile({
+        path: photoMetadata.webPath,
+        directory: FilesystemDirectory.Data
+      })
+      console.log("(Mobile) File.data: " + file.data)
+      return (file).data; // I believe this returns base64 data
+    }
 
-    // Print out fetch results. To do so, we need to re-fetch so we don't lock the body stream (?)
-    await fetch(photoMetadata.webPath).then(response => {
-      response.text()
-        .then(text=> {
-          console.log("fetched response: " + text)
-        })
-    })
-
-    // If hybrid, readFile (instead of fetch)
-      // Todo
-    
-    const blob = await responseObj.blob();
-    console.log('photoBlob:' + JSON.stringify(blob));
-    return await this.convertBlobToBase64(blob) as string;
-
-    //const base64Photo = await this.convertBlobToBase64(blobImage) as string;
-    //return base64Photo;
+    // if web
+    else{
+      const responseObj = await fetch(photoMetadata.webPath);
+      // Print out fetch results. To do so, we need to re-fetch so we don't lock the body stream (?)
+      await fetch(photoMetadata.webPath).then(response => {
+        response.text()
+          .then(text=> {
+            console.log("(Web) Fetch Response: " + text)
+          })
+      })
+      const blob = await responseObj.blob();
+      console.log('photoBlob:' + JSON.stringify(blob));
+      return await this.convertBlobToBase64(blob) as string;
+    }
   }
 
-  // async ConvertPhotoToBase64(blob){
-  //   //convert to blob (binary large object)
-    
-    
-  // }
 
-  async WritePhotoToLocalStorage(base64Photo){
+  async WritePhotoToFileServer(base64Photo: string){
     // Write photo to browser local storage
     const date = new Date();
     const time = date.getTime();
-    const path = time + this.format;
-    
-    //debugger;
+    const fileName = time + "." + this.format;
 
     Filesystem.writeFile({
-      path: path,
+      path: fileName,
       data: base64Photo,
       directory: FilesystemDirectory.Data
     })
 
-    console.log("File Written: " + JSON.stringify(path),
+    console.log("File Written: " + JSON.stringify(fileName),
       JSON.stringify(base64Photo)
     )
     return({
-      path: path,
+      fileName: fileName,
       webPath: this.webPath
     })
   }
+
   
   convertBlobToBase64 = (blob: Blob) => new Promise((resolve, reject) => {
     const reader = new FileReader;
@@ -134,17 +132,36 @@ export class PhotoService {
         resolve(reader.result);
     };
     reader.readAsDataURL(blob);
-
   });
+
+
+  async deletePhoto (photo, position: number){
+    this.photos.splice(position, 1);
+
+    Storage.set({
+      key: this.PHOTO_STORAGE_KEY,
+      value: JSON.stringify(this.photos)
+
+    })
+
+    const fileName = photo.fileName.substr(photo.fileName.lastIndexOf('/') + 1);
+    await Filesystem.deleteFile({
+      path: fileName,
+      directory: FilesystemDirectory.Data
+    })
+  }
 
   LogError(err){
     console.error('%c Error Occurred: ', 'background: #FF0000; color: #00000' + err.stack);
   }
-  
+
+  Console(obj: string){
+    console.log("Printing WebPath: " + obj);
+  }
 }
 
 class Photo {
-  path: String  //hybrid only?
+  fileName: String  //hybrid only?
   webPath: String
   base64?: String
 }
