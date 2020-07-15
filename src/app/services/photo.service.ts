@@ -44,7 +44,7 @@ export class PhotoService {
     // Update storage with entire photos array; ToDo: Determine if updating entire array is necessary-- could optimize by only updating only new photo
     Storage.set({
       key: this.PHOTO_STORAGE_KEY,
-      value: JSON.stringify(this.photos) 
+      value: JSON.stringify(this.photos)
     })
   }
 
